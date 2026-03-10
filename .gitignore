@@ -1,2 +1,7 @@
 .venv
 *.csv
+*.png
+*.jpg
+*.jpeg
+*.log
+*.out
