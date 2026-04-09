@@ -1,30 +1,52 @@
-// sht31_climate.cpp
-
 #include "sht31_climate.h"
-#include <DFRobot_SHT3x.h>  // Include the vendor library
 
-// Instantiate the sensor object. 
-// The default I2C address for the SEN0331 is 0x45.
-DFRobot_SHT3x sht3x(&Wire, 0x45); 
+SHT31Climate::SHT31Climate() : sensor(&Wire, 0x45), initialized(false) {
+    memset(&lastReading, 0, sizeof(SHT31_Reading));
+}
 
-bool Climate_Init() {
-    // sht3x.begin() returns 0 if initialization is successful
-    if (sht3x.begin() != 0) {
-        return false; 
+SHT31_Status SHT31Climate::init(uint8_t i2c_address) {
+    // DFRobot_SHT3x constructor needs device address
+    sensor.address = i2c_address;
+    
+    if (sensor.begin() != 0) {
+        return SHT31_INIT_FAILED;
     }
     
-    // Optional: Send a soft reset to ensure it starts in a clean state
-    sht3x.softReset();
+    sensor.softReset();
+    initialized = true;
+    return SHT31_OK;
+}
+
+SHT31_Status SHT31Climate::read(SHT31_Reading &reading) {
+    if (!initialized) {
+        return SHT31_INIT_FAILED;
+    }
     
-    return true;
+    float temp = sensor.getTemperatureC();
+    float hum = sensor.getHumidityRH();
+    
+    if (isnan(temp) || isnan(hum)) {
+        return SHT31_READ_FAILED;
+    }
+    
+    reading.temperature_c = temp;
+    reading.humidity_percent = hum;
+    reading.timestamp_ms = millis();
+    
+    lastReading = reading;
+    return SHT31_OK;
 }
 
-float Climate_ReadTemp() {
-    // The library has a built-in method to get the temperature in Celsius
-    return sht3x.getTemperatureC(); 
+bool SHT31Climate::isConnected() {
+    if (!initialized) return false;
+    // Query sensor by reading and checking for valid value
+    return !isnan(sensor.getTemperatureC());
 }
 
-float Climate_ReadHumidity() {
-    // The library has a built-in method to get the relative humidity
-    return sht3x.getHumidityRH(); 
+SHT31_Status SHT31Climate::getLastReading(SHT31_Reading &reading) {
+    if (!initialized) {
+        return SHT31_INIT_FAILED;
+    }
+    reading = lastReading;
+    return SHT31_OK;
 }
