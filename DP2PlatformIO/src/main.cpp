@@ -1,83 +1,46 @@
-// Hardware Abstraction Modules
-#include <sht31_climate.h>
+#include <Arduino.h>
+#include "sht31_climate.h"
+#include <bluefruit.h>
 
-// Uncomment when create folders in the lib/ directory
-// #include <dgs2_gas.h>
-// #include <ds18b20_probe.h>
-// #include <mpu6050_imu.h>
-// #include <rv1805_rtc.h>
-// #include <anomaly_model.h>
-
-// 2. Define global timing variables
-unsigned long lastInferenceTime = 0;
-const unsigned long INFERENCE_INTERVAL_MS = 10000; // Run every 10 seconds
+// Create the Bluetooth UART service object
+BLEUart bleuart; 
 
 void setup() {
-    // Initialize USB serial for debugging
-    Serial.begin(115200);
-    while (!Serial) delay(10); 
-    
-    Serial.println("Initializing Environmental Anomaly Detector...");
+  // 1. Initialize Bluetooth
+  Bluefruit.begin();
+  Bluefruit.setTxPower(4); // Set max transmission power
+  Bluefruit.setName("Climate_Node"); // This is the name you'll see on your phone
+  
+  bleuart.begin(); // Start the UART service
 
-    // Initialize all hardware components
-    // If a sensor fails to start, the function should return false to flag a hardware error
+  // 2. Set up Advertising so your phone can find it
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+  Bluefruit.Advertising.addService(bleuart);
+  Bluefruit.ScanResponse.addName();
+  Bluefruit.Advertising.start(0); // 0 = keep advertising forever
 
-    // Commented out until we create the corresponding .h and .cpp files in the lib/ directory
-    // if (!RTC_Init())          Serial.println("ERR: RV-1805 RTC failed!");
-    // if (!GasSensor_Init())    Serial.println("ERR: DGS2 UART failed!");
-    // if (!Climate_Init())      Serial.println("ERR: SHT31 I2C failed!");
-    // if (!TempProbe_Init())    Serial.println("ERR: DS18B20 1-Wire failed!");
-    // if (!IMU_Init())          Serial.println("ERR: MPU6050 I2C failed!");
-    
-    // Load the Edge-AI model weights into memory
-
-    // Commented out until we create the corresponding .h and .cpp files in the lib/ directory
-    //if (!AnomalyModel_Init()) Serial.println("ERR: Edge-AI Model failed to load!");
-    
-    Serial.println("System Ready.");
+  // 3. Initialize your custom climate sensor
+  Climate_Init();
 }
 
 void loop() {
-    // 3. Non-blocking timing check
-    if (millis() - lastInferenceTime >= INFERENCE_INTERVAL_MS) {
-        lastInferenceTime = millis();
-        
-        // --- PHASE A: DATA ACQUISITION ---
+  // Only read and send data if a phone is actually connected
+  if (Bluefruit.connected()) {
+    
+    // Fetch data using the wrapper functions you wrote
+    float temp = Climate_ReadTemp();
+    float humidity = Climate_ReadHumidity();
 
-        // Commented out until we create the corresponding .h and .cpp files in the lib/ directory
-        // String timestamp   = RTC_GetTimestamp();
-        // float ethylene_ppm = GasSensor_ReadPPM();
-        // float ambient_temp = Climate_ReadTemp();
-        // float ambient_hum  = Climate_ReadHumidity();
-        // float probe_temp   = TempProbe_ReadTemp();
-        // IMU_Data imu_data  = IMU_ReadMotion(); 
+    // Send data over Bluetooth
+    bleuart.print("Temp: ");
+    bleuart.print(temp);
+    bleuart.println(" C");
 
-        // --- PHASE B: EDGE-AI INFERENCE ---
-        // Pass the fresh environmental data to your anomaly model
-
-        // Commented out until we create the corresponding .h and .cpp files in the lib/ directory
-        // float anomaly_score = AnomalyModel_RunInference(
-        //     ethylene_ppm, 
-        //     ambient_temp, 
-        //     ambient_hum, 
-        //     probe_temp, 
-        //     imu_data.accel_z, 
-        //     imu_data.gyro_z
-        // );
-
-        // --- PHASE C: DECISION & LOGGING ---
-        Serial.print("[" + timestamp + "] ");
-        Serial.print("Ethylene: " + String(ethylene_ppm) + "ppm | ");
-        Serial.print("Anomaly Score: " + String(anomaly_score));
-
-        if (anomaly_score > 0.85) {
-            Serial.println(" *** ANOMALY DETECTED! ***");
-            // Trigger alerts, save to SD card, or transmit via radio
-        } else {
-            Serial.println(" - Normal");
-        }
-        
-        // --- PHASE D: POWER MANAGEMENT ---
-        // Insert sleep code here to turn off sensors and put the nRF52840 into deep sleep
-    }
+    bleuart.print("Humidity: ");
+    bleuart.print(humidity);
+    bleuart.println(" %");
+    bleuart.println("--------------------");
+  }
+  
+  delay(2000); // Wait 2 seconds between updates
 }
