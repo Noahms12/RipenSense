@@ -13,6 +13,7 @@
 #include "power_sys.h"
 #include "gps_maxm10s.h"
 #include "storage_w25q16.h"
+#include <bluefruit.h>
 
 // --- Pin Definitions ---
 #define ONE_WIRE_BUS 5       // DS18B20 Data pin
@@ -25,6 +26,8 @@ DGS2Gas gasSensor(&Serial1); // Assuming RX/TX on Serial1
 RTC_RV1805 rtc;
 PowerSys power(LOAD_SWITCH_PIN);
 GPS_MAXM10S gps;
+BLEUart bleuart; 
+
 
 // SPI setup for W25Q16
 Adafruit_FlashTransport_SPI flashTransport(FLASH_CS, &SPI);
@@ -68,6 +71,20 @@ void setup() {
     
     // imu.begin();
     // climate.begin();
+
+    // 1. Initialize Bluetooth
+    Bluefruit.begin();
+    Bluefruit.setTxPower(4); // Set max transmission power
+    Bluefruit.setName("Climate_Node"); // This is the name you'll see on your phone
+    
+    bleuart.begin(); // Start the UART service
+
+    // 2. Set up Advertising so your phone can find it
+    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+    Bluefruit.Advertising.addService(bleuart);
+    Bluefruit.ScanResponse.addName();
+    Bluefruit.Advertising.start(0); // 0 = keep advertising forever
+
     
     Serial.println("Setup Complete.");
 }
