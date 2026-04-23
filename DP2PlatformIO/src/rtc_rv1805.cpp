@@ -10,5 +10,6 @@ bool RTC_RV1805::begin() {
 
 String RTC_RV1805::getTimestamp() {
     _rtc.updateTime();
-    return _rtc.stringDate() + " " + _rtc.stringTime();
+    // Wrap the results in String() to allow concatenation
+    return String(_rtc.stringDate()) + " " + String(_rtc.stringTime());
 }
