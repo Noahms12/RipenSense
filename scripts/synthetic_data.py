@@ -452,19 +452,19 @@ if __name__ == "__main__":
 
     print("=== Training dataset (50 runs) ===")
     train = make_training_dataset()
-    train_path = "/mnt/user-data/outputs/ripensense_train_raw.csv"
+    train_path = "./outputs/ripensense_train_raw.csv"
     train.to_csv(train_path, index=False)
     print(f"  Saved: {train_path}\n")
 
     print("=== Edge Impulse flat dataset ===")
     ei = make_ei_dataset(train)
-    ei_path = "/mnt/user-data/outputs/ripensense_ei_flat.csv"
+    ei_path = "./outputs/ripensense_ei_flat.csv"
     ei.to_csv(ei_path, index=False)
     print(f"  Saved: {ei_path}\n")
 
     print("=== Demo run (1 day) ===")
     demo = make_demo_run()
-    demo_path = "/mnt/user-data/outputs/ripensense_1day_demo.csv"
+    demo_path = "./outputs/ripensense_1day_demo.csv"
     demo.to_csv(demo_path, index=False)
     print(f"  Demo rows: {len(demo):,}")
     print(f"  RI final: {demo.ri_cumulative.iloc[-1]:.1f}/100")
