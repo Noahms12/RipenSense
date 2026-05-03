@@ -1,113 +1,294 @@
+// #include <Arduino.h>
+// #include <Wire.h>
+// #include <bluefruit.h>
+
+// #include <Adafruit_MPU6050.h>
+// #include <Adafruit_Sensor.h>
+// #include <Adafruit_SHT31.h>
+// #include <OneWire.h>
+// #include <DallasTemperature.h>
+// #include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h>
+// #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+
+// #define ONE_WIRE_BUS 5
+// #define UTC_OFFSET_HOURS -4  // EDT (UTC-4); change to -5 for EST
+
+// BLEUart bleuart;
+
+// Adafruit_MPU6050  imu;
+// Adafruit_SHT31    sht31;
+// OneWire           oneWire(ONE_WIRE_BUS);
+// DallasTemperature ds18b20(&oneWire);
+// SFE_MAX1704X      fuelGauge(MAX1704X_MAX17048);
+// SFE_UBLOX_GNSS    gnss;
+
+// bool imuOk   = false;
+// bool sht31Ok = false;
+// bool gaugeOk = false;
+// bool gnssOk  = false;
+
+// void bleLog(const char* s) {
+//     Serial.print(s);
+//     if (bleuart.notifyEnabled()) bleuart.print(s);
+// }
+
+// void utcToEdt(int y, int mo, int d, int h, int mi, int s,
+//               int& oy, int& omo, int& od, int& oh, int& omi, int& os) {
+//     static const int daysInMonth[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
+//     oh = h + UTC_OFFSET_HOURS;
+//     omi = mi; os = s; od = d; omo = mo; oy = y;
+
+//     if (oh < 0) {
+//         oh += 24;
+//         od--;
+//         if (od < 1) {
+//             omo--;
+//             if (omo < 1) { omo = 12; oy--; }
+//             bool leap = (oy % 4 == 0 && (oy % 100 != 0 || oy % 400 == 0));
+//             od = (omo == 2 && leap) ? 29 : daysInMonth[omo];
+//         }
+//     } else if (oh >= 24) {
+//         oh -= 24;
+//         od++;
+//         bool leap = (oy % 4 == 0 && (oy % 100 != 0 || oy % 400 == 0));
+//         int dim = (omo == 2 && leap) ? 29 : daysInMonth[omo];
+//         if (od > dim) { od = 1; omo++; if (omo > 12) { omo = 1; oy++; } }
+//     }
+// }
+
+// void setup() {
+//     Serial.begin(115200);
+//     unsigned long t0 = millis();
+//     while (!Serial && millis() - t0 < 2000) {}
+
+//     Wire.begin();
+//     Wire.setClock(400000);
+
+//     // --- BLE ---
+//     Bluefruit.begin();
+//     Bluefruit.setTxPower(4);
+//     Bluefruit.setName("RipenSense");
+//     bleuart.begin();
+//     Bluefruit.Advertising.clearData();
+//     Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+//     Bluefruit.Advertising.addTxPower();
+//     Bluefruit.Advertising.addService(bleuart);
+//     Bluefruit.ScanResponse.addName();
+//     Bluefruit.Advertising.setInterval(32, 244);
+//     Bluefruit.Advertising.setFastTimeout(30);
+//     Bluefruit.Advertising.start(0);
+
+//     Serial.println("RipenSense -- BLE advertising as 'RipenSense'");
+
+//     // --- GPS (I2C 0x42) ---
+//     if (gnss.begin(Wire)) {
+//         gnssOk = true;
+//         gnss.setI2COutput(COM_TYPE_UBX);
+//         gnss.setNavigationFrequency(1);
+//         gnss.setAutoPVT(false);  // polled only
+//         Serial.println("GPS:             OK");
+//     } else {
+//         Serial.println("GPS:             FAIL");
+//     }
+
+//     // --- Ethylene sensor (DGS-EC) on Serial1 ---
+//     Serial1.begin(9600);
+//     Serial.println("Ethylene sensor: ready on Serial1");
+
+//     // Battery fuel gauge (I2C 0x36)
+//     gaugeOk = fuelGauge.begin(Wire);
+//     Serial.println(gaugeOk ? "Battery gauge:   OK" : "Battery gauge:   FAIL");
+
+//     // Ambient temp + humidity (I2C 0x45)
+//     sht31Ok = sht31.begin(0x45);
+//     Serial.println(sht31Ok ? "Temp/Humidity:   OK" : "Temp/Humidity:   FAIL");
+
+//     // Accelerometer / gyro (I2C 0x68)
+//     imuOk = imu.begin();
+//     if (imuOk) {
+//         imu.setAccelerometerRange(MPU6050_RANGE_8_G);
+//         imu.setGyroRange(MPU6050_RANGE_500_DEG);
+//         imu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+//     }
+//     Serial.println(imuOk ? "Accel/Gyro:      OK" : "Accel/Gyro:      FAIL");
+
+//     // External temp probe (1-Wire pin 5)
+//     ds18b20.begin();
+//     ds18b20.setResolution(9);
+//     char dsBuf[40];
+//     snprintf(dsBuf, sizeof(dsBuf), "Temp probe:      %d device(s)\n", ds18b20.getDeviceCount());
+//     Serial.print(dsBuf);
+
+//     Serial.println("--- Setup complete ---");
+// }
+
+// bool readEthylene(char* out, size_t outLen, unsigned long timeoutMs = 300) {
+//     while (Serial1.available()) Serial1.read();
+//     Serial1.write('\r');
+//     unsigned long deadline = millis() + timeoutMs;
+//     size_t pos = 0;
+//     while (millis() < deadline) {
+//         if (Serial1.available()) {
+//             char c = Serial1.read();
+//             if (c == '\n') {
+//                 out[pos] = '\0';
+//                 if (pos > 0 && out[pos - 1] == '\r') out[--pos] = '\0';
+//                 return pos > 0;
+//             }
+//             if (pos < outLen - 1) out[pos++] = c;
+//         }
+//     }
+//     return false;
+// }
+
+// void loop() {
+//     char buf[96];
+
+//     // Let I2C bus settle after previous iteration before hitting GPS
+//     delay(50);
+
+//     // --- GPS ---
+//     if (!gnssOk) {
+//         bleLog("GPS: module not found\r\n");
+//     } else if (!gnss.getPVT(1100)) {
+//         bleLog("GPS: timeout\r\n");
+//     } else {
+//         uint8_t fixType = gnss.getFixType();
+//         uint8_t siv     = gnss.getSIV();
+//         bool    timeOk  = gnss.getTimeValid();
+//         bool    dateOk  = gnss.getDateValid();
+
+//         snprintf(buf, sizeof(buf), "GPS: fix=%d sats=%d\r\n", fixType, siv);
+//         bleLog(buf);
+
+//         if (timeOk && dateOk) {
+//             int oy, omo, od, oh, omi, os;
+//             utcToEdt(gnss.getYear(), gnss.getMonth(),  gnss.getDay(),
+//                      gnss.getHour(), gnss.getMinute(), gnss.getSecond(),
+//                      oy, omo, od, oh, omi, os);
+//             snprintf(buf, sizeof(buf),
+//                 "Date/Time: %04d-%02d-%02d %02d:%02d:%02d EDT\r\n",
+//                 oy, omo, od, oh, omi, os);
+//             bleLog(buf);
+//         }
+
+//         if (fixType >= 2) {
+//             snprintf(buf, sizeof(buf),
+//                 "Location:  lat=%.6f lon=%.6f alt=%.1fm\r\n",
+//                 gnss.getLatitude()  / 1e7,
+//                 gnss.getLongitude() / 1e7,
+//                 gnss.getAltitude()  / 1000.0);
+//             bleLog(buf);
+//         }
+//     }
+
+//     // --- Battery ---
+//     if (gaugeOk) {
+//         snprintf(buf, sizeof(buf), "Battery:   %.1f%%  %.3fV\r\n",
+//             fuelGauge.getSOC(), fuelGauge.getVoltage());
+//         bleLog(buf);
+//     }
+
+//     // --- Ambient temp + humidity ---
+//     if (sht31Ok) {
+//         float t = sht31.readTemperature();
+//         float h = sht31.readHumidity();
+//         if (!isnan(t) && !isnan(h)) {
+//             snprintf(buf, sizeof(buf), "Temp:      %.2fC\r\n", t);
+//             bleLog(buf);
+//             snprintf(buf, sizeof(buf), "Humidity:  %.2f%%RH\r\n", h);
+//             bleLog(buf);
+//         } else {
+//             bleLog("Temp/Humidity: read error\r\n");
+//         }
+//     }
+
+//     // --- Accelerometer + gyro ---
+//     if (imuOk) {
+//         sensors_event_t accel, gyro, temp;
+//         imu.getEvent(&accel, &gyro, &temp);
+//         snprintf(buf, sizeof(buf), "Accel:     %.2f, %.2f, %.2f m/s2\r\n",
+//             accel.acceleration.x, accel.acceleration.y, accel.acceleration.z);
+//         bleLog(buf);
+//         snprintf(buf, sizeof(buf), "Gyro:      %.2f, %.2f, %.2f rad/s\r\n",
+//             gyro.gyro.x, gyro.gyro.y, gyro.gyro.z);
+//         bleLog(buf);
+//     }
+
+//     // --- External temp probe ---
+//     ds18b20.requestTemperatures();
+//     float probe = ds18b20.getTempCByIndex(0);
+//     if (probe != DEVICE_DISCONNECTED_C) {
+//         snprintf(buf, sizeof(buf), "Probe Temp: %.2fC\r\n", probe);
+//     } else {
+//         snprintf(buf, sizeof(buf), "Probe Temp: not found\r\n");
+//     }
+//     bleLog(buf);
+
+//     // --- Ethylene (DGS-EC on Serial1) ---
+//     char ethBuf[80];
+//     if (readEthylene(ethBuf, sizeof(ethBuf))) {
+//         char* token = strtok(ethBuf, ",");  // SN
+//         token = strtok(NULL, ",");           // PPB
+//         if (token) {
+//             snprintf(buf, sizeof(buf), "Ethylene:  %s ppb\r\n", token);
+//         } else {
+//             snprintf(buf, sizeof(buf), "Ethylene:  parse error\r\n");
+//         }
+//     } else {
+//         snprintf(buf, sizeof(buf), "Ethylene:  no response\r\n");
+//     }
+//     bleLog(buf);
+
+//     bleLog("----\r\n");
+//     delay(2000);
+// }
+
+
+// WORKING GPS CODE ONLY (no other sensors, no BLE) -- just to verify GPS I2C comms and parsing
 #include <Arduino.h>
 #include <Wire.h>
-#include <SPI.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 
-// Your existing modules
-#include "mpu6050_imu.h"
-#include "sht31_climate.h"
-
-// New modules
-#include "ds18b20_sensor.h"
-#include "dgs2_gas.h"
-#include "rtc_rv1805.h"
-#include "power_sys.h"
-#include "gps_maxm10s.h"
-#include "storage_w25q16.h"
-#include <bluefruit.h>
-
-// --- Pin Definitions ---
-#define ONE_WIRE_BUS 5       // DS18B20 Data pin
-#define LOAD_SWITCH_PIN 6    // TPS22918 enable pin
-#define FLASH_CS 10          // W25Q16 Chip Select
-
-// --- Instantiations ---
-DS18B20Sensor tempProbe(ONE_WIRE_BUS);
-DGS2Gas gasSensor(&Serial1); // Assuming RX/TX on Serial1
-RTC_RV1805 rtc;
-PowerSys power(LOAD_SWITCH_PIN);
-GPS_MAXM10S gps;
-BLEUart bleuart; 
-
-
-// SPI setup for W25Q16
-Adafruit_FlashTransport_SPI flashTransport(FLASH_CS, &SPI);
-StorageW25Q16 flash(&flashTransport);
-
-// Assuming your existing modules follow a similar class structure:
-// MPU6050_IMU imu;
-// SHT31_Climate climate;
+SFE_UBLOX_GNSS gnss;
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(10);
-    
-    Serial.println("Initializing Fruit Spoilage Tracker...");
+    unsigned long t0 = millis();
+    while (!Serial && millis() - t0 < 3000) {}
 
-    // Initialize core buses
-    Wire.begin(); // Standard Qwiic/I2C
-    SPI.begin();  // Standard SPI
-    
-    // 1. Power Management
-    if (power.begin()) {
-        Serial.println("Power system & Fuel Gauge online.");
+    Serial.println("GPS I2C test starting...");
+
+    Wire.begin();
+    Wire.setClock(400000);
+
+    if (gnss.begin(Wire)) {
+        Serial.println("GPS: found on I2C");
+        gnss.setI2COutput(COM_TYPE_UBX);
+        gnss.setNavigationFrequency(1);
+        gnss.setAutoPVT(true);
+        gnss.saveConfiguration();
+    } else {
+        Serial.println("GPS: NOT found -- check wiring (SDA/SCL, 3.3V, GND)");
     }
-
-    // 2. Storage
-    if (flash.begin()) {
-        Serial.println("SPI Flash ready.");
-    }
-
-    // 3. Navigation & Timing
-    if (rtc.begin()) {
-        Serial.println("RTC online.");
-    }
-    if (gps.begin()) {
-        Serial.println("GPS online."); // AANE-AP-0164-1 Antenna should be attached
-    }
-
-    // 4. Environmental Sensors
-    tempProbe.begin();
-    gasSensor.begin(9600);
-    
-    // imu.begin();
-    // climate.begin();
-
-    // 1. Initialize Bluetooth
-    Bluefruit.begin();
-    Bluefruit.setTxPower(4); // Set max transmission power
-    Bluefruit.setName("Climate_Node"); // This is the name you'll see on your phone
-    
-    bleuart.begin(); // Start the UART service
-
-    // 2. Set up Advertising so your phone can find it
-    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
-    Bluefruit.Advertising.addService(bleuart);
-    Bluefruit.ScanResponse.addName();
-    Bluefruit.Advertising.start(0); // 0 = keep advertising forever
-
-    
-    Serial.println("Setup Complete.");
 }
 
 void loop() {
-    // Example data loop
-    Serial.print("Time: ");
-    Serial.println(rtc.getTimestamp());
+    if (gnss.getPVT(1100)) {
+        Serial.print("fix=");      Serial.print(gnss.getFixType());
+        Serial.print(" sats=");    Serial.print(gnss.getSIV());
+        Serial.print(" timeOk=");  Serial.print(gnss.getTimeValid());
+        Serial.print(" dateOk=");  Serial.println(gnss.getDateValid());
 
-    Serial.print("Battery: ");
-    Serial.print(power.getSOC());
-    Serial.println("%");
-
-    Serial.print("Probe Temp (C): ");
-    Serial.println(tempProbe.getTemperatureC());
-    
-    // Read and clear the UART gas sensor buffer
-    String gasData = gasSensor.readData();
-    if(gasData.length() > 0) {
-        Serial.print("Gas: ");
-        Serial.println(gasData);
+        if (gnss.getFixType() >= 2) {
+            Serial.print("lat=");  Serial.print(gnss.getLatitude()  / 1e7, 6);
+            Serial.print(" lon="); Serial.print(gnss.getLongitude() / 1e7, 6);
+            Serial.print(" alt="); Serial.print(gnss.getAltitude()  / 1000.0, 1);
+            Serial.println("m");
+        }
+    } else {
+        Serial.println("GPS: no PVT response");
     }
-    
-    Serial.println("--------------------");
-    delay(2000);
+
+    delay(1000);
 }
