@@ -3,7 +3,10 @@ RipenSense Synthetic Data Generator v2
 ========================================
 Outputs:
   ripensense_train_raw.csv     : all 50 runs concatenated, full minute-by-minute rows
-  ripensense_edge_impulse.csv  : windowed (30-min windows, stride 5) ready for EI ingestion
+  ripensense_ei_flat.csv       : flat feature table for Edge Impulse regression ingestion
+                                 (one row per 30-min window, 270 features + anomaly_score)
+                                 No metadata columns, no time-series structure hints.
+                                 Upload as: "Each column contains a reading, each row is a sample"
   ripensense_1day_demo.csv     : 1-day demo narrative run
 
 Key improvements over v1:
@@ -11,7 +14,7 @@ Key improvements over v1:
   - Randomized event timing, magnitude, and initial RI per run
   - "Near miss" scenario class (approaches threshold, recovers)
   - Stage-aware Q10 that updates as RI accumulates
-  - Edge Impulse CSV format: timestamp_ms column + feature columns + label column
+  - Flat EI export: no run_id/scenario_type, no timestamp, just features + label
   - Excess-above-optimal RI formula (calibrated: normal 24h -> RI~9, bad 24h -> RI~100)
 """
 
@@ -388,35 +391,39 @@ STRIDE      = 5
 
 def make_ei_dataset(train_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Slide a 30-minute window over each run.
-    Label = anomaly_score at the last row of the window (current moment).
-    Output: one row per window, columns = [run_id, scenario_type,
-            feat_t0..feat_t29 (flattened), anomaly_score]
+    Slide a 30-minute window over each run and produce a flat feature table.
+
+    Output format (Edge Impulse regression, flat sample):
+      - One row per window
+      - 270 feature columns (9 sensors x 30 timesteps), named feat_t0..feat_t29
+      - Final column: anomaly_score (label)
+      - NO run_id, scenario_type, or timestamps (EI treats those as features otherwise)
+
+    Upload to EI as: "Each column contains a reading, each row contains a full sample"
     """
     records = []
     for run_id, group in train_df.groupby("run_id"):
         group = group.reset_index(drop=True)
-        scenario = group["scenario_type"].iloc[0]
-        feats = group[FEATURE_COLS].values
+        feats  = group[FEATURE_COLS].values   # (1440, 9)
         labels = group["anomaly_score"].values
         n = len(group)
 
         for start in range(0, n - WINDOW_SIZE + 1, STRIDE):
             window = feats[start : start + WINDOW_SIZE]   # (30, 9)
-            label  = labels[start + WINDOW_SIZE - 1]      # anomaly at window end
+            label  = labels[start + WINDOW_SIZE - 1]
+            flat   = window.T.flatten()                   # (270,) sensor-major order
+            records.append(flat.tolist() + [label])
 
-            # Flatten: feat0_t0, feat0_t1, ..., feat8_t29
-            flat = window.T.flatten()   # shape (30*9,) = (270,)
-            records.append([run_id, scenario] + flat.tolist() + [label])
-
-    # Column names
+    # Column names: temp_c_t0..t29, humidity_rh_t0..t29, ..., anomaly_score
     feat_names = [f"{col}_t{t}" for col in FEATURE_COLS for t in range(WINDOW_SIZE)]
-    cols = ["run_id", "scenario_type"] + feat_names + ["anomaly_score"]
+    cols = feat_names + ["anomaly_score"]
     df = pd.DataFrame(records, columns=cols)
-    print(f"Edge Impulse dataset: {len(df):,} windows  "
+
+    print(f"Edge Impulse flat dataset: {len(df):,} windows  "
           f"({WINDOW_SIZE}-min window, stride {STRIDE})")
-    print(f"  Feature dims: {len(feat_names)}  (9 features x 30 timesteps)")
+    print(f"  Feature columns: {len(feat_names)}  (9 features x 30 timesteps)")
     print(f"  Label range: {df.anomaly_score.min():.3f} - {df.anomaly_score.max():.3f}")
+    print(f"  Label mean:  {df.anomaly_score.mean():.3f}  std: {df.anomaly_score.std():.3f}")
     return df
 
 # ---------------------------------------------------------------------------
@@ -449,9 +456,9 @@ if __name__ == "__main__":
     train.to_csv(train_path, index=False)
     print(f"  Saved: {train_path}\n")
 
-    print("=== Edge Impulse windowed dataset ===")
+    print("=== Edge Impulse flat dataset ===")
     ei = make_ei_dataset(train)
-    ei_path = "/mnt/user-data/outputs/ripensense_edge_impulse.csv"
+    ei_path = "/mnt/user-data/outputs/ripensense_ei_flat.csv"
     ei.to_csv(ei_path, index=False)
     print(f"  Saved: {ei_path}\n")
 
