@@ -10,8 +10,13 @@
 #include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 
+#include <edge-impulse-sdk/classifier/ei_run_classifier.h>
+
 #define ONE_WIRE_BUS 5
 #define UTC_OFFSET_HOURS -4  // EDT (UTC-4); change to -5 for EST
+#define EI_INPUT_SIZE 270
+
+static float ei_input[EI_INPUT_SIZE];
 
 BLEUart bleuart;
 
