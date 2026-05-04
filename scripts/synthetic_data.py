@@ -445,6 +445,69 @@ def make_demo_run() -> pd.DataFrame:
     return df
 
 # ---------------------------------------------------------------------------
+# VISUALIZATION (Matplotlib diagnostics)
+# ---------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+
+def plot_single_run(df: pd.DataFrame, title: str = "Single Run Overview"):
+    fig, axs = plt.subplots(4, 1, figsize=(14, 10), sharex=True)
+
+    axs[0].plot(df["temp_c"], label="Sensor Temp")
+    axs[0].plot(df["probe_temp_c"], label="Probe Temp", alpha=0.6)
+    axs[0].set_ylabel("Temp (C)")
+    axs[0].legend()
+
+    axs[1].plot(df["humidity_rh"], label="Humidity", color="tab:blue")
+    axs[1].set_ylabel("RH (%)")
+    axs[1].legend()
+
+    axs[2].plot(df["ethylene_ppb"], label="Ethylene", color="tab:orange")
+    axs[2].set_ylabel("ppb")
+    axs[2].legend()
+
+    axs[3].plot(df["ri_cumulative"], label="RI", color="tab:red")
+    axs[3].plot(df["anomaly_score"] * 100, label="Anomaly (scaled)", alpha=0.6)
+    axs[3].set_ylabel("RI / Anomaly")
+    axs[3].set_xlabel("Minute")
+    axs[3].legend()
+
+    plt.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_scenario_comparison(train_df: pd.DataFrame):
+    summary = train_df.groupby("scenario_type")["anomaly_score"].mean().sort_values()
+
+    plt.figure(figsize=(10, 4))
+    plt.bar(summary.index, summary.values)
+    plt.xticks(rotation=45, ha="right")
+    plt.ylabel("Mean anomaly score")
+    plt.title("Scenario Risk Comparison")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_ri_distribution(train_df: pd.DataFrame):
+    plt.figure(figsize=(8, 4))
+    plt.hist(train_df["ri_cumulative"], bins=50)
+    plt.xlabel("RI")
+    plt.ylabel("Frequency")
+    plt.title("RI Distribution Across All Runs")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_ethylene_vs_ri(train_df: pd.DataFrame):
+    plt.figure(figsize=(6, 5))
+    plt.scatter(train_df["ethylene_ppb"], train_df["ri_cumulative"], s=1, alpha=0.2)
+    plt.xlabel("Ethylene (ppb)")
+    plt.ylabel("RI")
+    plt.title("Ethylene vs Ripeness Index")
+    plt.tight_layout()
+    plt.show()
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -481,3 +544,10 @@ if __name__ == "__main__":
         anomaly_max =("anomaly_score", "max"),
     ).round(3)
     print(summary.to_string())
+
+    demo_plot = make_demo_run()
+    plot_single_run(demo_plot, "Demo Run: Sensor + RI Dynamics")
+
+    plot_scenario_comparison(train)
+    plot_ri_distribution(train)
+    plot_ethylene_vs_ri(train)

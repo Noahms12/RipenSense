@@ -50,10 +50,17 @@ def parse_rows(raw):
 
         try:
             decoded = text.decode("utf-8", errors="ignore").strip()
-            if decoded:
-                rows.append(decoded)
         except:
             continue
+
+        if not decoded:
+            continue
+
+        # Basic sanity check: valid rows should have at least 5 commas
+        if decoded.count(",") < 5:
+            continue
+
+        rows.append(decoded)
 
     return rows
 
