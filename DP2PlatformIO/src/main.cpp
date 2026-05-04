@@ -37,15 +37,7 @@ Adafruit_FlashTransport_QSPI flashTransport;
 Adafruit_SPIFlash             spiFlash(&flashTransport);
 bool flashFull = false;
 
-struct FlashMeta {
-    uint32_t magic;
-    uint32_t writePtr;
-    uint32_t seq;
-};
-
-FlashMeta meta;
 uint32_t flashPtr = 0;
-bool useMetaA = true;
 // ---------------------------------------------------------------------------
 // Physics / ML Constants
 // ---------------------------------------------------------------------------
@@ -80,6 +72,20 @@ int   windowFilled  = 0;
 #define W_H          0.01f
 #define TEMP_REF     13.0f
 #define ETH_THRESH   100.0f
+
+#define ETH_SAMPLE_WINDOW_MS 1000
+
+#define FLASH_BASE_ADDR 0x000000
+#define ROW_SIZE 256
+#define MAX_ROWS 7800
+
+uint32_t flashWriteAddr = FLASH_BASE_ADDR;
+uint32_t rowIndex = 0;
+
+float ethSum = 0.0f;
+uint16_t ethCount = 0;
+uint32_t lastEthSample = 0;
+float ethyleneAvg = 0.0f;
 
 float vpSat(float t) { return 0.61078f * exp(17.27f * t / (t + 237.3f)); }
 float computeVPD(float t, float rh) { return vpSat(t) * (1.0f - rh / 100.0f); }
@@ -156,40 +162,9 @@ void utcToEdt(int y, int mo, int d, int h, int mi, int s,
 // ---------------------------------------------------------------------------
 // Flash helpers
 // ---------------------------------------------------------------------------
-#define FLASH_META_A 0x000000
-#define FLASH_META_B 0x000800
-#define FLASH_BASE   0x002000
 #define FLASH_MAGIC  0xA1B2C3D4
 #define ROW_MAGIC    0x55AA
 
-void loadMeta() {
-    FlashMeta a, b;
-
-    spiFlash.readBuffer(FLASH_META_A, (uint8_t*)&a, sizeof(a));
-    spiFlash.readBuffer(FLASH_META_B, (uint8_t*)&b, sizeof(b));
-
-    bool va = a.magic == FLASH_MAGIC;
-    bool vb = b.magic == FLASH_MAGIC;
-
-    if (vb && (!va || b.seq >= a.seq)) meta = b;
-    else if (va) meta = a;
-    else {
-        meta.magic = FLASH_MAGIC;
-        meta.writePtr = FLASH_BASE;
-        meta.seq = 0;
-    }
-}
-
-void saveMeta() {
-    meta.magic = FLASH_MAGIC;
-    meta.seq++;
-
-    uint32_t addr = useMetaA ? FLASH_META_A : FLASH_META_B;
-    useMetaA = !useMetaA;
-
-    spiFlash.eraseSector(addr);
-    spiFlash.writeBuffer(addr, (uint8_t*)&meta, sizeof(meta));
-}
 
 uint32_t crc32(const uint8_t* data, size_t len) {
     uint32_t crc = 0xFFFFFFFF;
@@ -204,28 +179,30 @@ uint32_t crc32(const uint8_t* data, size_t len) {
     return ~crc;
 }
 
-void writeRowToFlash(const char* row) {
-    if (flashPtr + 256 >= spiFlash.size()) return;
+void writeRowToFlash(const char *row) {
+    if (rowIndex >= MAX_ROWS) {
+        flashFull = true;
+        return;
+    }
 
-    uint8_t buf[256];
-    memset(buf, 0, sizeof(buf));
+    uint8_t buffer[ROW_SIZE];
+    memset(buffer, 0xFF, ROW_SIZE);
 
-    uint16_t len = strlen(row);
+    size_t len = strlen(row);
+    if (len > ROW_SIZE - 1) len = ROW_SIZE - 1;
 
-    *((uint16_t*)&buf[0]) = 0x55AA;
-    *((uint16_t*)&buf[2]) = len;
+    memcpy(buffer, row, len);
 
-    memcpy(&buf[8], row, len);
+    spiFlash.writeBuffer(flashWriteAddr, buffer, ROW_SIZE);
 
-    uint32_t crc = crc32(&buf[8], len);
-    *((uint32_t*)&buf[4]) = crc;
 
-    spiFlash.writeBuffer(flashPtr, buf, 256);
+    flashWriteAddr += ROW_SIZE;
+    rowIndex++;
 
-    flashPtr += 256;
-    meta.writePtr = flashPtr;
-
-    saveMeta();
+    if (rowIndex >= MAX_ROWS) {
+        flashFull = true;
+        return;
+    }
 }
 
 void handleSerialCommands() {
@@ -248,19 +225,22 @@ void handleSerialCommands() {
     }
 
     // --- COMMAND: Data Dump ---
-    if (cmd == 'd' || cmd == 'D') {
+    if (cmd == 'D') {
         Serial.println("FLASH DUMP START");
 
-        uint8_t buf[256];
+        for (uint32_t addr = FLASH_BASE_ADDR;
+            addr < flashWriteAddr;
+            addr += ROW_SIZE) {
 
-        for (uint32_t addr = 0x002000; addr < flashPtr; addr += 256) {
-            spiFlash.readBuffer(addr, buf, 256);
-            Serial.write(buf, 256);
+            uint8_t buf[ROW_SIZE];
+            spiFlash.readBuffer(addr, buf, ROW_SIZE);
+
+            Serial.write(buf, ROW_SIZE);
+            Serial.println();
         }
 
-        Serial.println("\nFLASH DUMP END");
-        return;
-    }
+        Serial.println("FLASH DUMP END");
+    }   
     // --- PASSTHROUGH: Catch-all for manual sensor interaction ---
     // If you type anything else (like 'v' for version), it goes to the sensor
     Serial1.write(cmd);
@@ -318,9 +298,10 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    while (!Serial) {
+    while (!Serial && millis() < 10000) {
         // Wait for Serial to be ready
         pulseLED(2);
+        delay(50);
     }
 
     Wire.begin();
@@ -359,23 +340,27 @@ void setup() {
         Serial.println("Flash init failed");
     }
 
-    loadMeta();
-    flashPtr = meta.writePtr;
+    rowIndex = 0;
+    flashWriteAddr = FLASH_BASE_ADDR;
 
     Serial.print("Flash resume ptr: ");
-    Serial.println(flashPtr);    memset(featureWindow, 0, sizeof(featureWindow));
-    
+    Serial.println(flashWriteAddr);
+
+    memset(featureWindow, 0, sizeof(featureWindow));
+
     lastLogTime = millis();
     lastShockSample = millis();
+
     Serial.println("--- Setup complete ---");
 }
+
 uint32_t then = 0;
+uint32_t now = 0;
 void loop() {
-    uint32_t now = millis();
+    now = millis();
     // every 5 seconds, print a heartbeat to show we're alive in case of long sensor reads
     if (now - then >= 5000) {
         then = now;
-        Serial.println("Heartbeat: alive and running...");
         pulseLED(1);
     }
 
@@ -419,9 +404,28 @@ void loop() {
     float probeTemp = ds18b20.getTempCByIndex(0);
     if (probeTemp == DEVICE_DISCONNECTED_C) probeTemp = tempC;
 
-    float ethylenePpb = 0.0f;
-    readEthylene(ethylenePpb);
+    now = millis();
 
+    if (now - lastEthSample >= ETH_SAMPLE_WINDOW_MS) {
+        float val = 0.0f;
+
+        if (readEthylene(val)) {
+            ethSum += val;
+            ethCount++;
+        }
+
+        lastEthSample = now;
+    }
+
+    // compute averaged value for logging
+    float ethylenePpb = 0.0f;
+
+    if (ethCount > 0) {
+        ethyleneAvg = ethSum / ethCount;
+        ethSum = 0.0f;
+        ethCount = 0;
+    }
+    ethylenePpb = ethyleneAvg;
     float battPct = fuelGauge.getSOC();
     float battV   = fuelGauge.getVoltage();
     float vpdVal = computeVPD(tempC, humidity);
