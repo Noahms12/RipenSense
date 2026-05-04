@@ -226,18 +226,64 @@ void handleSerialCommands() {
     if (!Serial.available()) return;
     char cmd = Serial.read();
 
+    // --- COMMAND: INFO DASHBOARD ---
+    if (cmd == 'i' || cmd == 'I') {
+        Serial.println("\n--- RipenSense Device Status ---");
+        
+        // 1. Time & GPS Status
+        Serial.print("Time (EDT):      ");
+        // We reuse the last logic from loop or pull fresh if gnssOk
+        if (gnssOk) {
+            Serial.print(gnss.getYear()); Serial.print("-");
+            Serial.print(gnss.getMonth()); Serial.print("-");
+            Serial.print(gnss.getDay()); Serial.print(" ");
+            Serial.print(gnss.getHour()); Serial.print(":");
+            Serial.println(gnss.getMinute());
+        } else {
+            Serial.println("GPS Not Fixed");
+        }
+
+        // 2. Flash Storage Status
+        Serial.println("\n[Storage]");
+        Serial.print("External Flash:  ");
+        if (extFlashOk) {
+            uint32_t used = extLogFile.size();
+            uint32_t total = spiFlash.size();
+            Serial.print(used / 1024); Serial.print(" KB / ");
+            Serial.print(total / 1024); Serial.println(" KB");
+        } else {
+            Serial.println("OFFLINE");
+        }
+
+        Serial.print("Internal Flash:  ");
+        if (useOnboardFlash && intLogFile) {
+            Serial.print(intLogFile->size() / 1024); Serial.println(" KB (ACTIVE BACKUP)");
+        } else {
+            Serial.println("IDLE (Standby)");
+        }
+
+        // 3. Power & Environment
+        Serial.println("\n[System]");
+        if (gaugeOk) {
+            Serial.print("Battery:         ");
+            Serial.print(fuelGauge.getSOC(), 1); Serial.print("% (");
+            Serial.print(fuelGauge.getVoltage(), 2); Serial.println("V)");
+        }
+        
+        Serial.print("Current RI:      "); Serial.println(riCumulative, 2);
+        Serial.print("Model Version:   "); Serial.println(MODEL_VERSION);
+        Serial.println("--------------------------------\n");
+        return;
+    }
+
     // --- COMMAND: Zero Ethylene Sensor ---
     if (cmd == 'Z') {
         Serial.println("\n!!! ETHYLENE ZERO COMMAND RECEIVED !!!");
-        Serial.println("Ensure sensor is in clean air for at least 30 mins.");
-        Serial.println("Sending 'Z' and unlock code to sensor...");
-        
         Serial1.write('Z');
-        delay(100);             // Short delay for sensor buffer
-        Serial1.print("12345"); // Send factory default unlock code
-        Serial1.write('\r');    // Carriage return to finalize
-        
-        Serial.println("Commands sent. Check next log row for updated PPB.");
+        delay(100);             
+        Serial1.print("12345"); 
+        Serial1.write('\r');    
+        Serial.println("Commands sent. Check 'i' or log row for updated PPB.");
         return; 
     }
 
@@ -271,8 +317,7 @@ void handleSerialCommands() {
         return;
     }
 
-    // --- PASSTHROUGH: Catch-all for manual sensor interaction ---
-    // If you type anything else (like 'v' for version), it goes to the sensor
+    // --- PASSTHROUGH ---
     Serial1.write(cmd);
 }
 
@@ -351,9 +396,14 @@ void setup() {
     lastShockSample = millis();
     Serial.println("--- Setup complete ---");
 }
-
+uint32_t lastBlink = 0;
 void loop() {
     uint32_t now = millis();
+
+    if (now - lastBlink > 500) {
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+        lastBlink = now;
+    }
 
     if (imuOk && now - lastShockSample >= SHOCK_SAMPLE_INTERVAL_MS) {
         lastShockSample = now;
