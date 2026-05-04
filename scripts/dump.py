@@ -97,7 +97,7 @@ def dump(port: str, outfile: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RipenSense serial CSV dump")
     parser.add_argument("--port",  default=None,               help="Serial port")
-    parser.add_argument("--out",   default="shipment_dump.csv", help="Output CSV filename")
+    parser.add_argument("--out",   default="outputs/shipment_dump.csv", help="Output CSV filename")
     args = parser.parse_args()
 
     port = args.port or find_port()
