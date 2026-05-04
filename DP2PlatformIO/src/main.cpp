@@ -225,33 +225,55 @@ void writeRowToFlash(const char* row) {
 void handleSerialCommands() {
     if (!Serial.available()) return;
     char cmd = Serial.read();
-    if (cmd != 'd' && cmd != 'D') return;
 
-    Serial.println("=== DUMP START ===");
-    if (extFlashOk && !useOnboardFlash) {
-        extLogFile.flush();
-        File32 readFile = fatfs.open(FLASH_CSV_FILENAME, FILE_READ);
-        if (readFile) {
-            uint8_t buf[64];
-            while (readFile.available()) {
-                int n = readFile.read(buf, sizeof(buf));
-                Serial.write(buf, n);
-            }
-            readFile.close();
-        }
-    } else if (useOnboardFlash) {
-        if (intLogFile) intLogFile->flush();
-        Adafruit_LittleFS_Namespace::File readFile = InternalFS.open(FLASH_CSV_FILENAME, FILE_O_READ);
-        if (readFile) {
-            uint8_t buf[64];
-            while (readFile.available()) {
-                int n = readFile.read(buf, sizeof(buf));
-                Serial.write(buf, n);
-            }
-            readFile.close();
-        }
+    // --- COMMAND: Zero Ethylene Sensor ---
+    if (cmd == 'Z') {
+        Serial.println("\n!!! ETHYLENE ZERO COMMAND RECEIVED !!!");
+        Serial.println("Ensure sensor is in clean air for at least 30 mins.");
+        Serial.println("Sending 'Z' and unlock code to sensor...");
+        
+        Serial1.write('Z');
+        delay(100);             // Short delay for sensor buffer
+        Serial1.print("12345"); // Send factory default unlock code
+        Serial1.write('\r');    // Carriage return to finalize
+        
+        Serial.println("Commands sent. Check next log row for updated PPB.");
+        return; 
     }
-    Serial.println("\n=== DUMP END ===");
+
+    // --- COMMAND: Data Dump ---
+    if (cmd == 'd' || cmd == 'D') {
+        Serial.println("=== DUMP START ===");
+        if (extFlashOk && !useOnboardFlash) {
+            extLogFile.flush();
+            File32 readFile = fatfs.open(FLASH_CSV_FILENAME, FILE_READ);
+            if (readFile) {
+                uint8_t buf[64];
+                while (readFile.available()) {
+                    int n = readFile.read(buf, sizeof(buf));
+                    Serial.write(buf, n);
+                }
+                readFile.close();
+            }
+        } else if (useOnboardFlash) {
+            if (intLogFile) intLogFile->flush();
+            Adafruit_LittleFS_Namespace::File readFile = InternalFS.open(FLASH_CSV_FILENAME, FILE_O_READ);
+            if (readFile) {
+                uint8_t buf[64];
+                while (readFile.available()) {
+                    int n = readFile.read(buf, sizeof(buf));
+                    Serial.write(buf, n);
+                }
+                readFile.close();
+            }
+        }
+        Serial.println("\n=== DUMP END ===");
+        return;
+    }
+
+    // --- PASSTHROUGH: Catch-all for manual sensor interaction ---
+    // If you type anything else (like 'v' for version), it goes to the sensor
+    Serial1.write(cmd);
 }
 
 bool readEthylene(float &ppb) {
