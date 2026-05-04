@@ -35,15 +35,17 @@ using namespace Adafruit_LittleFS_Namespace;
 // External SPI flash
 Adafruit_FlashTransport_QSPI flashTransport;
 Adafruit_SPIFlash             spiFlash(&flashTransport);
-FatVolume                     fatfs;
+bool flashFull = false;
 
-// Flash state
-bool     extFlashOk      = false;
-bool     useOnboardFlash = false;
-bool     flashFull       = false;
-File32   extLogFile;                                 // FatFS handle
-Adafruit_LittleFS_Namespace::File* intLogFile = nullptr; // Pointer for LittleFS handle
+struct FlashMeta {
+    uint32_t magic;
+    uint32_t writePtr;
+    uint32_t seq;
+};
 
+FlashMeta meta;
+uint32_t flashPtr = 0;
+bool useMetaA = true;
 // ---------------------------------------------------------------------------
 // Physics / ML Constants
 // ---------------------------------------------------------------------------
@@ -154,72 +156,76 @@ void utcToEdt(int y, int mo, int d, int h, int mi, int s,
 // ---------------------------------------------------------------------------
 // Flash helpers
 // ---------------------------------------------------------------------------
-bool initExternalFlash() {
-    if (!spiFlash.begin()) {
-        Serial.println("Flash: SPI flash init failed");
-        return false;
+#define FLASH_META_A 0x000000
+#define FLASH_META_B 0x000800
+#define FLASH_BASE   0x002000
+#define FLASH_MAGIC  0xA1B2C3D4
+#define ROW_MAGIC    0x55AA
+
+void loadMeta() {
+    FlashMeta a, b;
+
+    spiFlash.readBuffer(FLASH_META_A, (uint8_t*)&a, sizeof(a));
+    spiFlash.readBuffer(FLASH_META_B, (uint8_t*)&b, sizeof(b));
+
+    bool va = a.magic == FLASH_MAGIC;
+    bool vb = b.magic == FLASH_MAGIC;
+
+    if (vb && (!va || b.seq >= a.seq)) meta = b;
+    else if (va) meta = a;
+    else {
+        meta.magic = FLASH_MAGIC;
+        meta.writePtr = FLASH_BASE;
+        meta.seq = 0;
     }
-    if (!fatfs.begin(&spiFlash)) {
-        Serial.println("Flash: FAT filesystem not found, formatting...");
-        uint8_t workbuf[512];
-        FatFormatter formatter;
-        if (!formatter.format(&spiFlash, workbuf, nullptr)) {
-            Serial.println("Flash: format failed");
-            return false;
+}
+
+void saveMeta() {
+    meta.magic = FLASH_MAGIC;
+    meta.seq++;
+
+    uint32_t addr = useMetaA ? FLASH_META_A : FLASH_META_B;
+    useMetaA = !useMetaA;
+
+    spiFlash.eraseSector(addr);
+    spiFlash.writeBuffer(addr, (uint8_t*)&meta, sizeof(meta));
+}
+
+uint32_t crc32(const uint8_t* data, size_t len) {
+    uint32_t crc = 0xFFFFFFFF;
+
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++) {
+            crc = (crc >> 1) ^ (0xEDB88320 & (-(int)(crc & 1)));
         }
-        if (!fatfs.begin(&spiFlash)) return false;
     }
-    bool isNew = !fatfs.exists(FLASH_CSV_FILENAME);
-    extLogFile = fatfs.open(FLASH_CSV_FILENAME, FILE_WRITE);
-    if (!extLogFile) return false;
-    if (isNew) {
-        extLogFile.print(CSV_HEADER);
-        extLogFile.flush();
-    }
-    Serial.println("Flash: external SPI flash OK");
-    return true;
+
+    return ~crc;
 }
 
 void writeRowToFlash(const char* row) {
-    if (flashFull) return;
+    if (flashPtr + 256 >= spiFlash.size()) return;
 
-    if (extFlashOk && !useOnboardFlash) {
-        uint32_t used  = extLogFile.size();
-        uint32_t total = spiFlash.size();
-        
-        // 95% full check for hand-off
-        if (used + strlen(row) + 10 > total * 0.95) {
-            Serial.println("Flash: external full, switching to internal backup...");
-            extLogFile.close();
-            useOnboardFlash = true;
-            InternalFS.begin();
-            
-            // Initialize the File object pointer
-            intLogFile = new Adafruit_LittleFS_Namespace::File(InternalFS.open(FLASH_CSV_FILENAME, FILE_O_WRITE));
-            
-            if (!intLogFile || !(*intLogFile)) {
-                Serial.println("Flash: onboard open failed");
-                flashFull = true;
-                return;
-            }
-            intLogFile->print(CSV_HEADER);
-            intLogFile->flush();
-        } else {
-            extLogFile.print(row);
-            extLogFile.flush();
-            Serial.println("Flash: wrote row to external flash");
-        }
-    } else if (useOnboardFlash && intLogFile) {
-        // Internal emergency cap: ~150KB
-        if (intLogFile->size() > 150000) {
-            Serial.println("Flash: onboard full");
-            intLogFile->close();
-            flashFull = true;
-            return;
-        }
-        intLogFile->print(row);
-        intLogFile->flush();
-    }
+    uint8_t buf[256];
+    memset(buf, 0, sizeof(buf));
+
+    uint16_t len = strlen(row);
+
+    *((uint16_t*)&buf[0]) = 0x55AA;
+    *((uint16_t*)&buf[2]) = len;
+
+    memcpy(&buf[8], row, len);
+
+    uint32_t crc = crc32(&buf[8], len);
+    *((uint32_t*)&buf[4]) = crc;
+
+    spiFlash.writeBuffer(flashPtr, buf, 256);
+
+    flashPtr += 256;
+    meta.writePtr = flashPtr;
+
+    saveMeta();
 }
 
 void handleSerialCommands() {
@@ -243,34 +249,18 @@ void handleSerialCommands() {
 
     // --- COMMAND: Data Dump ---
     if (cmd == 'd' || cmd == 'D') {
-        Serial.println("=== DUMP START ===");
-        if (extFlashOk && !useOnboardFlash) {
-            extLogFile.flush();
-            File32 readFile = fatfs.open(FLASH_CSV_FILENAME, FILE_READ);
-            if (readFile) {
-                uint8_t buf[64];
-                while (readFile.available()) {
-                    int n = readFile.read(buf, sizeof(buf));
-                    Serial.write(buf, n);
-                }
-                readFile.close();
-            }
-        } else if (useOnboardFlash) {
-            if (intLogFile) intLogFile->flush();
-            Adafruit_LittleFS_Namespace::File readFile = InternalFS.open(FLASH_CSV_FILENAME, FILE_O_READ);
-            if (readFile) {
-                uint8_t buf[64];
-                while (readFile.available()) {
-                    int n = readFile.read(buf, sizeof(buf));
-                    Serial.write(buf, n);
-                }
-                readFile.close();
-            }
+        Serial.println("FLASH DUMP START");
+
+        uint8_t buf[256];
+
+        for (uint32_t addr = 0x002000; addr < flashPtr; addr += 256) {
+            spiFlash.readBuffer(addr, buf, 256);
+            Serial.write(buf, 256);
         }
-        Serial.println("\n=== DUMP END ===");
+
+        Serial.println("\nFLASH DUMP END");
         return;
     }
-
     // --- PASSTHROUGH: Catch-all for manual sensor interaction ---
     // If you type anything else (like 'v' for version), it goes to the sensor
     Serial1.write(cmd);
@@ -334,27 +324,46 @@ void setup() {
     }
 
     Wire.begin();
+    Wire.setClock(100000);
     pulseLED(3);
-    Wire.setClock(400000);
-    pulseLED(3);
+
     vpdOptimal = computeVPD(13.5f, 92.5f);
     Serial.println("Optimal VPD (kPa): " + String(vpdOptimal, 3));
     pulseLED(3);
 
-    if (gnss.begin(Wire)) {
-        gnssOk = true;
-        gnss.setI2COutput(COM_TYPE_UBX);
-    }
-    Serial1.begin(9600);
-    pulseLED(3);
-    gaugeOk = fuelGauge.begin(Wire);
+    // ---- light sensors first ----
     sht31Ok = sht31.begin(0x45);
     imuOk = imu.begin();
     if (imuOk) imu.setAccelerometerRange(MPU6050_RANGE_8_G);
 
+    // ---- fuel gauge (DO NOT trust begin result) ----
+    fuelGauge.begin(Wire);
+    gaugeOk = true;
+
+    // ---- GNSS LAST ----
+    delay(150);
+    if (gnss.begin(Wire)) {
+        gnssOk = true;
+        gnss.setI2COutput(COM_TYPE_UBX);
+    }
+
+    Serial1.begin(9600);
+    pulseLED(3);
+
+    // ---- confirm fuel gauge actually on bus ----
+    Wire.beginTransmission(0x36);
+    Serial.print("MAX1704x ACK: ");
+    Serial.println(Wire.endTransmission() == 0 ? "OK" : "FAIL");
     ds18b20.begin();
-    extFlashOk = initExternalFlash();
-    memset(featureWindow, 0, sizeof(featureWindow));
+    if (!spiFlash.begin()) {
+        Serial.println("Flash init failed");
+    }
+
+    loadMeta();
+    flashPtr = meta.writePtr;
+
+    Serial.print("Flash resume ptr: ");
+    Serial.println(flashPtr);    memset(featureWindow, 0, sizeof(featureWindow));
     
     lastLogTime = millis();
     lastShockSample = millis();
@@ -413,9 +422,8 @@ void loop() {
     float ethylenePpb = 0.0f;
     readEthylene(ethylenePpb);
 
-    float battPct = 0.0f, battV = 0.0f;
-    if (gaugeOk) { battPct = fuelGauge.getSOC(); battV = fuelGauge.getVoltage(); }
-
+    float battPct = fuelGauge.getSOC();
+    float battV   = fuelGauge.getVoltage();
     float vpdVal = computeVPD(tempC, humidity);
     int   stage  = getStage(riCumulative);
     float delta  = computeRIDelta(tempC, humidity, ethylenePpb, getQ10(stage));
