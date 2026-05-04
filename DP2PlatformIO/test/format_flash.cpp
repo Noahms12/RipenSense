@@ -7,84 +7,100 @@
 Adafruit_FlashTransport_SPI flashTransport(FLASH_CS_PIN, &SPI);
 Adafruit_SPIFlash spiFlash(&flashTransport);
 
+static const uint32_t SECTOR_SIZE = 4096;
+
+// --------------------------------------------------
+// LOW LEVEL BUS RESET (fixes post-erase desync)
+// --------------------------------------------------
+void resetSPIBus() {
+    SPI.end();
+    delay(2);
+    SPI.begin();
+}
+
+// --------------------------------------------------
+// VERIFY ONE SECTOR IS BLANK (0xFF)
+// --------------------------------------------------
+bool verifySector(uint32_t addr) {
+    uint8_t buf[64];
+
+    for (uint32_t off = 0; off < SECTOR_SIZE; off += sizeof(buf)) {
+        spiFlash.readBuffer(addr + off, buf, sizeof(buf));
+
+        for (int i = 0; i < sizeof(buf); i++) {
+            if (buf[i] != 0xFF) {
+                Serial.print("VERIFY FAIL @ ");
+                Serial.print(addr + off + i);
+                Serial.print(" val=0x");
+                Serial.println(buf[i], HEX);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// --------------------------------------------------
+// FORMAT + VERIFY WITH TRANSACTION ISOLATION
+// --------------------------------------------------
+void formatFlash() {
+    Serial.println("\nFLASH FORMAT START");
+
+    if (!spiFlash.begin()) {
+        Serial.println("Flash init failed");
+        while (1);
+    }
+
+    uint32_t size = spiFlash.size();
+    uint32_t lastAddr = size - SECTOR_SIZE;
+
+    Serial.print("Flash size: ");
+    Serial.println(size);
+
+    // ---------------- ERASE + IMMEDIATE VERIFY ----------------
+    for (uint32_t addr = 0; addr <= lastAddr; addr += SECTOR_SIZE) {
+
+        Serial.print("Erasing: ");
+        Serial.println(addr);
+
+        if (!spiFlash.eraseSector(addr)) {
+            Serial.print("ERASE FAIL @ ");
+            Serial.println(addr);
+            return;
+        }
+
+        spiFlash.waitUntilReady();
+        resetSPIBus();
+
+        delay(2);
+
+        // immediate verify (not full scan)
+        if (!verifySector(addr)) {
+            Serial.print("DIRTY SECTOR AFTER ERASE @ ");
+            Serial.println(addr);
+            return;
+        }
+
+        resetSPIBus();
+        delay(1);
+    }
+
+    Serial.println("FLASH CLEAN (ALL SECTORS VERIFIED)");
+}
+
+// --------------------------------------------------
+// SETUP
+// --------------------------------------------------
 void setup() {
     Serial.begin(115200);
     while (!Serial) delay(10);
 
-    Serial.println("\n=== RAW FLASH TEST (NO FATFS) ===");
-
     SPI.begin();
 
-    if (!spiFlash.begin()) {
-        Serial.println("ERROR: flash init failed");
-        while (1);
-    }
+    formatFlash();
 
-    Serial.print("Flash size (bytes): ");
-    Serial.println(spiFlash.size());
-
-    uint32_t addr = 0x000000;
-
-    // ---- ERASE ----
-    Serial.println("[ERASE]");
-    if (!spiFlash.eraseSector(addr)) {
-        Serial.println("ERROR: erase failed");
-        return;
-    }
-
-    // ---- WRITE ----
-    Serial.println("[WRITE]");
-    uint8_t tx[32];
-    for (int i = 0; i < 32; i++) tx[i] = i;
-
-    if (!spiFlash.writeBuffer(addr, tx, sizeof(tx))) {
-        Serial.println("ERROR: write failed");
-        return;
-    }
-
-    // ---- READ ----
-    Serial.println("[READ]");
-    uint8_t rx[32];
-
-    if (!spiFlash.readBuffer(addr, rx, sizeof(rx))) {
-        Serial.println("ERROR: read failed");
-        return;
-    }
-
-    // ---- VERIFY ----
-    bool ok = true;
-    for (int i = 0; i < 32; i++) {
-        if (rx[i] != tx[i]) {
-            ok = false;
-            Serial.print("Mismatch @ ");
-            Serial.print(i);
-            Serial.print(": ");
-            Serial.print(rx[i], HEX);
-            Serial.print(" != ");
-            Serial.println(tx[i], HEX);
-        }
-    }
-
-    if (ok) {
-        Serial.println("PASS: raw read/write OK");
-    } else {
-        Serial.println("FAIL: verification error");
-    }
-
-    // ---- CSV WRITE TEST ----
-    const char *csv = "12345,23.5,50.2\n";
-
-    Serial.println("[CSV WRITE]");
-    spiFlash.eraseSector(0x001000);
-    spiFlash.writeBuffer(0x001000, (const uint8_t*)csv, strlen(csv));
-
-    uint8_t buf[64] = {0};
-    spiFlash.readBuffer(0x001000, buf, strlen(csv));
-
-    Serial.print("CSV READBACK: ");
-    Serial.println((char*)buf);
-
-    Serial.println("=== DONE ===");
+    Serial.println("DONE");
 }
 
+// --------------------------------------------------
 void loop() {}
