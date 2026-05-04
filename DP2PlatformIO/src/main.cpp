@@ -17,6 +17,7 @@
 // Pin / bus config & Constants
 // ---------------------------------------------------------------------------
 #define ONE_WIRE_BUS        5
+#define FLASH_CS_PIN        10  // Standard SPI Chip Select Pin
 #define UTC_OFFSET_HOURS   -4   // EDT
 
 #define FLASH_CSV_FILENAME  "/ripensense_log.csv"
@@ -26,10 +27,10 @@
                             "battery_pct,battery_v,model_version\n"
 #define MODEL_VERSION       "A1"
 
-// External SPI flash
-Adafruit_FlashTransport_QSPI flashTransport;
-Adafruit_SPIFlash            spiFlash(&flashTransport);
-FatVolume                    fatfs;
+// External Standard SPI flash
+Adafruit_FlashTransport_SPI flashTransport(FLASH_CS_PIN, &SPI);
+Adafruit_SPIFlash           spiFlash(&flashTransport);
+FatVolume                   fatfs;
 
 // Flash state
 bool   extFlashOk = false;
